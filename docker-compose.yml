@@ -1,0 +1,60 @@
+# Aula 41 (Outbox / Inbox / idempotência) — ambiente em containers
+# Use pelo VS Code: abra a pasta base (C:\repos\fiap\java-41) e "Dev Containers: Reopen in Container".
+# A pasta inteira vira /workspace no container dev, com starter-aula41/ e solucao-aula41/ dentro.
+# (Os alunos não precisam deste arquivo: ./mvnw quarkus:dev com Docker Desktop no ar basta — Dev Services.)
+# dev: JDK 21 + Maven + psql + Quarkus CLI (terminal integrado do VS Code)
+# db : PostgreSQL 16, exposto no Windows em localhost:4101 (a 5432 fica livre para um Postgres local)
+# Portas no Windows (esquema <aula><seq>): 4100 Quarkus · 4101 PostgreSQL · 4102 debug remoto · 4103 testes (só dentro do container).
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: fiap41-dev
+    working_dir: /workspace
+    command: sleep infinity
+    volumes:
+      - .:/workspace
+      - fiap41-m2:/root/.m2
+    ports:
+      - "4100:4100"   # Quarkus
+      - "4102:5005"   # debug remoto (JDWP 5005 dentro do container)
+    environment:
+      # Com estas três variáveis o Quarkus usa o container db em vez de Dev Services.
+      # Nos alunos (sem as variáveis) o Dev Services sobe um Postgres sozinho.
+      QUARKUS_HTTP_HOST: 0.0.0.0
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://db:5432/fiap
+      QUARKUS_DATASOURCE_USERNAME: fiap
+      QUARKUS_DATASOURCE_PASSWORD: fiap
+      PGHOST: db
+      PGUSER: fiap
+      PGPASSWORD: fiap
+      PGDATABASE: fiap
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    container_name: fiap41-db
+    environment:
+      POSTGRES_DB: fiap
+      POSTGRES_USER: fiap
+      POSTGRES_PASSWORD: fiap
+    ports:
+      - "4101:5432"
+    volumes:
+      - fiap41-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fiap -d fiap"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  # Cache Maven próprio da Aula 41 (o da Aula 40 foi removido). O primeiro build baixa tudo (3–6 min);
+  # depois fica aqui. `docker compose down -v` apaga este cache e o banco — evite.
+  fiap41-m2:
+    name: fiap41-m2
+  fiap41-pg:
+    name: fiap41-pg

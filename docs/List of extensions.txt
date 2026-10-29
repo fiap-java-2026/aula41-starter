@@ -1,0 +1,29 @@
+Application Creation
+--------------------
+Group: br.com.fiap
+Artifact: aula41
+Build Tool: Maven
+Version: 1.0.0-SNAPSHOT
+Java Version: 21
+Starter Code: No
+
+
+list of extensions
+------------------
+REST Jackson
+[quarkus-rest-jackson]
+Jackson serialization support for Quarkus REST. This extension is not compatible with the quarkus-resteasy extension, or any of the extensions that depend on it
+
+Hibernate ORM
+[quarkus-hibernate-orm]
+STARTER-CODE
+Object-relational mapping with JPA/Hibernate for relational database access
+
+JDBC Driver - PostgreSQL
+[quarkus-jdbc-postgresql]
+Connect to the PostgreSQL database via JDBC
+
+SmallRye OpenAPI
+[quarkus-smallrye-openapi]
+Generate OpenAPI schemas and serve Swagger UI for REST API documentation
+

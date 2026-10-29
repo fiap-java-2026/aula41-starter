@@ -1,0 +1,42 @@
+{
+  "name": "FIAP Aula 41 — Outbox/Inbox (Quarkus + Postgres)",
+  "dockerComposeFile": [
+    "../docker-compose.yml"
+  ],
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "redhat.vscode-quarkus",
+        "ms-azuretools.vscode-containers"
+      ],
+      "settings": {
+        "java.configuration.runtimes": [
+          {
+            "name": "JavaSE-21",
+            "path": "/opt/java/openjdk",
+            "default": true
+          }
+        ],
+        "java.configuration.updateBuildConfiguration": "automatic",
+        "editor.fontSize": 16,
+        "terminal.integrated.fontSize": 16,
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+  "forwardPorts": [
+    4100,
+    4101,
+    4102
+  ],
+  "portsAttributes": {
+    "4100": { "label": "Quarkus (app)", "onAutoForward": "silent" },
+    "4101": { "label": "PostgreSQL", "onAutoForward": "silent" },
+    "4102": { "label": "Debug remoto", "onAutoForward": "silent" }
+  },
+  "postCreateCommand": "for d in outbox solucao-aula41/outbox starter-aula41/outbox outbox-live; do [ -f \"$d/mvnw\" ] && chmod +x \"$d/mvnw\"; done; true"
+}

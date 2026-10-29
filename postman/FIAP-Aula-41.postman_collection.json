@@ -1,0 +1,915 @@
+{
+  "info": {
+    "_postman_id": "9192cf86-15ca-45a5-9cec-13f1f008a3a4",
+    "name": "FIAP Aula 41 — Outbox, Inbox e idempotência",
+    "description": "Roteiro do slide 20 + critérios do slide 22. Rode as pastas em ordem (Runner) ou passo a passo em sala. Cada GET /contagens guarda a foto em {{antes}}; o próximo GET compara os deltas.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "eventId",
+      "value": ""
+    },
+    {
+      "key": "antes",
+      "value": "{}"
+    }
+  ],
+  "item": [
+    {
+      "name": "0 · Estado inicial",
+      "item": [
+        {
+          "name": "GET /contagens (foto inicial)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": "Equivale a: SELECT count(*) FROM pedido / outbox / inbox / faturamento."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));",
+                  "console.log(\"contagens:\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /q/openapi (contrato)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/q/openapi",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "q",
+                "openapi"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1 · Outbox: pedido e intenção no mesmo commit (slide 15)",
+      "item": [
+        {
+          "name": "POST /pedidos",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pedidos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pedidos"
+              ]
+            },
+            "description": "O service persiste Pedido e OutboxEvent no mesmo @Transactional. Guarda {{eventId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clienteId\": 42,\n  \"valor\": 150.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test(\"eventId é UUID\", () => pm.expect(j.eventId).to.match(/^[0-9a-f-]{36}$/));",
+                  "pm.test(\"enviado=false (relay ainda não rodou)\", () => pm.expect(j.enviado).to.eql(false));",
+                  "pm.collectionVariables.set(\"eventId\", j.eventId);",
+                  "pm.collectionVariables.set(\"pedidoId\", j.pedidoId);",
+                  "console.log(\"eventId guardado:\", j.eventId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contagens → +1 pedido, +1 outbox",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const antes = JSON.parse(pm.collectionVariables.get(\"antes\") || \"{}\");",
+                  "const c = pm.response.json();",
+                  "pm.test(\"pedidos: +1\", () => pm.expect(c.pedidos - (antes.pedidos||0)).to.eql(1));",
+                  "pm.test(\"outbox: +1\", () => pm.expect(c.outbox - (antes.outbox||0)).to.eql(1));",
+                  "pm.test(\"outboxPendentes: +1\", () => pm.expect(c.outboxPendentes - (antes.outboxPendentes||0)).to.eql(1));",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /pedidos?falhar=true → 500 e rollback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pedidos?falhar=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pedidos"
+              ],
+              "query": [
+                {
+                  "key": "falhar",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Exceção depois dos dois persist e antes do commit (slide 20, passo 2).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clienteId\": 42,\n  \"valor\": 99.9\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 500 com corpo estável\", () => pm.response.to.have.status(500));",
+                  "pm.test(\"erro = falha-simulada\", () => pm.expect(pm.response.json().erro).to.eql(\"falha-simulada\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contagens → nada mudou (rollback conjunto)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const antes = JSON.parse(pm.collectionVariables.get(\"antes\") || \"{}\");",
+                  "const c = pm.response.json();",
+                  "pm.test(\"pedidos: +0\", () => pm.expect(c.pedidos - (antes.pedidos||0)).to.eql(0));",
+                  "pm.test(\"outbox: +0\", () => pm.expect(c.outbox - (antes.outbox||0)).to.eql(0));",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 · Relay didático e at-least-once (slides 9 e 19)",
+      "item": [
+        {
+          "name": "DELETE /broker/mensagens (limpa o broker)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/broker/mensagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "broker",
+                "mensagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /relay/run?falharAntesDeMarcar=true → publica e cai",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/relay/run?falharAntesDeMarcar=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "relay",
+                "run"
+              ],
+              "query": [
+                {
+                  "key": "falharAntesDeMarcar",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Publica no broker simulado e lança exceção antes de marcar enviado=true. A marcação reverte; a publicação não (o broker não participa da transação)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 500: relay caiu entre publicar e marcar\", () => pm.response.to.have.status(500));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contagens → outboxPendentes continua 1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const antes = JSON.parse(pm.collectionVariables.get(\"antes\") || \"{}\");",
+                  "const c = pm.response.json();",
+                  "pm.test(\"outboxPendentes: +0\", () => pm.expect(c.outboxPendentes - (antes.outboxPendentes||0)).to.eql(0));",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /relay/run → publica DE NOVO e marca",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/relay/run",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "relay",
+                "run"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"publicou 1 e marcou 1\", () => { const j = pm.response.json(); pm.expect(j.publicados).to.eql(1); pm.expect(j.marcados).to.eql(1); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /broker/mensagens → o mesmo eventId duas vezes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/broker/mensagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "broker",
+                "mensagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const id = pm.collectionVariables.get(\"eventId\");",
+                  "const n = pm.response.json().filter(m => m.eventId === id).length;",
+                  "pm.test(\"eventId \" + id + \" apareceu 2x no broker (at-least-once)\", () => pm.expect(n).to.eql(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /relay/run → nada a publicar",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/relay/run",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "relay",
+                "run"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"publicados = 0\", () => pm.expect(pm.response.json().publicados).to.eql(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contagens → outboxPendentes = 0",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.test(\"outboxPendentes = 0\", () => pm.expect(c.outboxPendentes).to.eql(0));",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 · Inbox: consumo idempotente (slide 16)",
+      "item": [
+        {
+          "name": "POST /simular/consumir/{{eventId}} (1ª entrega)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/simular/consumir/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "simular",
+                "consumir",
+                "{{eventId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"efeitoAplicado = true\", () => pm.expect(pm.response.json().efeitoAplicado).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /simular/consumir/{{eventId}} (2ª entrega, duplicata)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/simular/consumir/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "simular",
+                "consumir",
+                "{{eventId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"efeitoAplicado = false (ON CONFLICT DO NOTHING)\", () => pm.expect(pm.response.json().efeitoAplicado).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contagens → +1 inbox, +1 faturamento",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const antes = JSON.parse(pm.collectionVariables.get(\"antes\") || \"{}\");",
+                  "const c = pm.response.json();",
+                  "pm.test(\"inbox: +1\", () => pm.expect(c.inbox - (antes.inbox||0)).to.eql(1));",
+                  "pm.test(\"faturamento: +1\", () => pm.expect(c.faturamento - (antes.faturamento||0)).to.eql(1));",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /broker/entregar → tudo o que o broker tem (duplicatas ignoradas)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/broker/entregar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "broker",
+                "entregar"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test(\"nenhum efeito novo: o evento já estava na inbox\", () => pm.expect(j.efeitosNovos).to.eql(0));",
+                  "pm.test(\"duplicatas ignoradas = entregues\", () => pm.expect(j.duplicatasIgnoradas).to.eql(j.entregues));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contagens → nada mudou",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const antes = JSON.parse(pm.collectionVariables.get(\"antes\") || \"{}\");",
+                  "const c = pm.response.json();",
+                  "pm.test(\"inbox: +0\", () => pm.expect(c.inbox - (antes.inbox||0)).to.eql(0));",
+                  "pm.test(\"faturamento: +0\", () => pm.expect(c.faturamento - (antes.faturamento||0)).to.eql(0));",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4 · Desafio: critérios de aceite (slides 21–22)",
+      "item": [
+        {
+          "name": "POST /pedidos (novo evento para o desafio)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pedidos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pedidos"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clienteId\": 7,\n  \"valor\": 320.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"eventId\", pm.response.json().eventId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contagens (foto)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));",
+                  "console.log(\"contagens:\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /simular/consumir/{{eventId}}/falhar → efeito falha, inbox reverte",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/simular/consumir/{{eventId}}/falhar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "simular",
+                "consumir",
+                "{{eventId}}",
+                "falhar"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"revertido = true\", () => pm.expect(pm.response.json().revertido).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contagens → inbox e faturamento sem mudança",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const antes = JSON.parse(pm.collectionVariables.get(\"antes\") || \"{}\");",
+                  "const c = pm.response.json();",
+                  "pm.test(\"inbox: +0\", () => pm.expect(c.inbox - (antes.inbox||0)).to.eql(0));",
+                  "pm.test(\"faturamento: +0\", () => pm.expect(c.faturamento - (antes.faturamento||0)).to.eql(0));",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /simular/consumir/{{eventId}}/vezes/5 → 5 entregas, 1 efeito",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/simular/consumir/{{eventId}}/vezes/5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "simular",
+                "consumir",
+                "{{eventId}}",
+                "vezes",
+                "5"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test(\"entregas = 5\", () => pm.expect(j.entregas).to.eql(5));",
+                  "pm.test(\"efeitosAplicados = 1\", () => pm.expect(j.efeitosAplicados).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contagens → +1 inbox, +1 faturamento",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contagens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contagens"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const antes = JSON.parse(pm.collectionVariables.get(\"antes\") || \"{}\");",
+                  "const c = pm.response.json();",
+                  "pm.test(\"inbox: +1\", () => pm.expect(c.inbox - (antes.inbox||0)).to.eql(1));",
+                  "pm.test(\"faturamento: +1\", () => pm.expect(c.faturamento - (antes.faturamento||0)).to.eql(1));",
+                  "pm.collectionVariables.set(\"antes\", JSON.stringify(c));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /pedidos/{{pedidoId}}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/pedidos/{{pedidoId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pedidos",
+                "{{pedidoId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /simular/consumir/<uuid inexistente> → 404",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/simular/consumir/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "simular",
+                "consumir",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 404 com corpo estável\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"erro = evento-nao-encontrado\", () => pm.expect(pm.response.json().erro).to.eql(\"evento-nao-encontrado\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
